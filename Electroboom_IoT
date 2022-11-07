@@ -1,0 +1,186 @@
+//Importing libraries 
+//Wifi.h enables network connection
+#include <WiFi.h>
+//Thingspeak.h Communication Library enables hardware to write or read data
+//to or from ThingSpeak
+#include "ThingSpeak.h"
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
+#include <DHT_U.h>
+
+#define DHTPIN 4   // Digital pin connected to the DHT sensor 
+#define DHTTYPE    DHT22     // DHT sensor type 22 (AM2302)
+int pin = 21;
+
+DHT_Unified dht(DHTPIN, DHTTYPE);
+
+const char* ssid = "Micify"; // Network name
+const char* password = "Namaste_madam"; // network password
+WiFiClient client;
+//Thingspeak Details
+unsigned long myChannelNumber = 1884806;
+const char * myWriteAPIKey = "88ZJK9NHUM7H6IU2";
+
+// Timer variables
+//Unsigned long variables are extended size variables for number storage, and store 32 bits (4 bytes).
+//Unlike standard longs unsigned longs won’t store negative numbers, making their range from 0 to 4,294,967,295 (2^32 - 1).
+unsigned long lastTime = 0;
+//15 seconds because tinkgspeak allows updating data every 15 seconds
+unsigned long timerDelay = 15000;
+uint32_t delayMS;
+
+
+// Variable to hold value
+//Datatype for floating-point numbers, a number that has a decimal point.
+//Floating-point numbers can be as large as 3.4028235E+38 and as low as -3.4028235E+38.
+//They are stored as 32 bits (4 bytes) of information.
+float temperatureC;
+float humidity;
+unsigned long high;
+unsigned long low;
+float Cppm;
+int n;
+
+void setup() {
+  
+//The setup() function is called when a sketch starts.
+//Use it to initialize variables, pin modes, start using libraries, etc.
+//The setup() function will only run once, after each powerup or reset of the Arduino board.
+
+  //initialising libraries
+  Serial.begin(115200); //Initialize serial
+  WiFi.mode(WIFI_STA);
+  dht.begin();
+  ThingSpeak.begin(client); // Initialize ThingSpeak
+  sensor_t sensor; 
+  dht.temperature().getSensor(&sensor);
+  dht.humidity().getSensor(&sensor);
+
+  //Assigining value to delayMS
+  //sensor delay is 2ms
+  delayMS = sensor.min_delay / 1000;
+  //assigning role to ESP32 Pins
+  pinMode(pin, INPUT);
+  pinMode(5, OUTPUT);
+   
+}
+
+void loop() {
+  // Delay between measurements.
+  delay(delayMS);
+  
+  // Get temperature event and print its value.
+  sensors_event_t event;
+  dht.temperature().getEvent(&event);
+  //check if measurement was taken
+  //if error in measurement
+  if (isnan(event.temperature)) {
+    Serial.println(F("Error reading temperature!"));
+    }
+  //if measurement taken properly
+  else {
+    Serial.print(F("Temperature1: "));
+    temperatureC = event.temperature;
+    Serial.print(temperatureC);
+    Serial.println(F("°C"));
+  }
+  // Get humidity event and print its value.
+  dht.humidity().getEvent(&event);
+  //check if measurement was taken
+  //if error in measurement
+  if (isnan(event.relative_humidity)) {
+    Serial.println(F("Error reading humidity!"));
+  }
+  //if measurement taken properly
+  else {
+    Serial.print(F("Humidity1: "));
+    humidity = event.relative_humidity;
+    Serial.print(humidity);
+    Serial.println(F("%"));
+  }
+  //Blinking LED 4 times to tell user DHT22 sensor did not take measurement correctly
+  if (isnan(event.relative_humidity) || isnan(event.temperature)){
+        n = 0;
+    while (n<4){
+        digitalWrite(5, HIGH);
+        delay(500);
+        digitalWrite(5, LOW);
+        delay(500);
+        n += 1;        
+   }
+  }
+  //Collecting raw data from CO2 sensor
+  //Calculating high and low from collected data
+     high = pulseIn(pin, HIGH, 2008000)/1000; // get the raw reading
+   low = 1004 - high;
+
+  //If data collected properly printing CO2 concentration
+  if( high>0){
+   Serial.print("CO2 Concentration is ");
+   Serial.print(Cppm);
+   Serial.println(" ppm.");
+   Cppm = 2000 * (high-2) / (high+low -4);
+   //Turning led on or off to warn user of high CO2 Concentration
+         if (Cppm>800){
+  digitalWrite(5, HIGH); // turn the LED on
+   }
+         if (Cppm<800){
+  digitalWrite(5, LOW); // turn the LED on
+   }
+   }
+   //if error in data collection from CO2 sensor blinking led 6 times
+   if (high==0){
+    Serial.println("Error reading CO2 concentration.");
+    n = 0;
+    while (n<6){
+        digitalWrite(5, HIGH);
+        delay(500);
+        digitalWrite(5, LOW);
+        delay(500);
+        n += 1;        
+   }
+   }
+ //Checking if 15 seconds have passed since last upload
+ //millis() - returns time elapsed since program is running
+ if ((millis() - lastTime) > timerDelay) {
+
+ // Check if connected to wifi
+ //try to connect 3 times if not connected
+ if(WiFi.status() != WL_CONNECTED){
+ Serial.print("Attempting to connect");
+ n  = 0;
+ while(WiFi.status() != WL_CONNECTED){
+ WiFi.begin(ssid, password);
+ delay(5000);
+ n += 1;
+ if (n>2){break;}
+ }
+ //print if wifi is connected or not
+  if(WiFi.status() == WL_CONNECTED){
+ Serial.println("\nConnected.");}
+   if(WiFi.status() != WL_CONNECTED){
+ Serial.println("\nNot Connected.");}
+ }
+
+  //if connected to wifi uploading data to thingspeak
+ if(WiFi.status() == WL_CONNECTED){
+  //assigining data to thinkspeak fields
+ ThingSpeak.setField(1,temperatureC);
+ ThingSpeak.setField(2,humidity);
+ ThingSpeak.setField(3,Cppm);
+
+ // Write to ThingSpea
+ int x = ThingSpeak.writeFields(myChannelNumber,myWriteAPIKey);
+ //check if data written to thingspeak correctly or not
+ Serial.println(x);
+  if(x == 200){
+ Serial.println("Channel update successful.");
+ }
+ else{
+ Serial.println("Problem updating channel. HTTP error code " + String(x));
+ }
+ }
+ //updating lastTime value in every loop
+ lastTime = millis();
+ }
+}
